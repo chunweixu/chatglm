@@ -1,55 +1,161 @@
+from transformers import TrainingArguments
+from transformers import Trainer, HfArgumentParser
+from transformers import AutoTokenizer
+from modeling_chatglm import ChatGLMForConditionalGeneration
+import torch
+import torch.nn as nn
+from peft import get_peft_model, LoraConfig, TaskType
+from dataclasses import dataclass, field
+import datasets
 import os
 
-from transformers import AutoTokenizer, AutoModel ,TrainingArguments, Trainer
-from peft import get_peft_config, get_peft_model, LoraConfig, TaskType
-
-from MyDataset import CLMDataset, CLMDataCollator
-
-peft_config = LoraConfig(
-    task_type=TaskType.CAUSAL_LM, inference_mode=False, r=8, lora_alpha=32, lora_dropout=0.1,
-    target_modules=['query_key_value']
-)
 
 tokenizer = AutoTokenizer.from_pretrained("THUDM/chatglm-6b", trust_remote_code=True)
-model = AutoModel.from_pretrained("THUDM/chatglm-6b", trust_remote_code=True)
 
-# from peft import prepare_model_for_int8_training
-# model = prepare_model_for_int8_training(model)
 
-model = get_peft_model(model, peft_config)
-print(model)
-model.print_trainable_parameters()
+@dataclass
+class FinetuneArguments:
+    dataset_path: str = field(default="data/alpaca")
+    model_path: str = field(default="output")
+    lora_rank: int = field(default=8)
 
-train_dataset = CLMDataset()
-collate_fn = CLMDataCollator(tokenizer, max_length=2048)
 
-os.environ["WANDB_DISABLED"] = "true"
-training_args = TrainingArguments(
-    output_dir='./data/results',
-    num_train_epochs=2,
-    gradient_accumulation_steps=1,
-    per_device_train_batch_size=1,
-    per_device_eval_batch_size=4,
-    logging_dir='./data/log/',
-    learning_rate=1e-3,
-    save_steps=1000,
-    weight_decay=0.01,
-    save_total_limit=4,
-    save_strategy='steps',
-    # deepspeed=deepspeed_config,
-    report_to=None
-    # resume_from_checkpoint='./results/checkpoint-12000'
-)
+class CastOutputToFloat(nn.Sequential):
+    def forward(self, x):
+        return super().forward(x).to(torch.float32)
 
-model.half()
-trainer = Trainer(
-    model=model,
-    data_collator=collate_fn,
-    train_dataset=train_dataset,
-    args=training_args
-)
 
-# trainer.train(resume_from_checkpoint=True)
-trainer.train()
-model.save_pretrained("./data/model/finetune-chatglm")
-tokenizer.save_pretrained("./data/model/finetune-chatglm")
+def get_masks_and_position_ids(
+    seq, seq_len, context_length, device, gmask=False, position_encoding_2d=True
+):
+    mask_position = (
+        seq_len - 2
+    )  # is equal to `seq.index(mask_token)` or `seq.index(150001)`
+    attention_mask = torch.ones((1, context_length, context_length), device=device)
+    attention_mask.tril_()
+    attention_mask[..., : mask_position - 1] = 1
+    attention_mask = (attention_mask < 0.5).bool()
+
+    if position_encoding_2d:
+        seq_length = seq_len - 1  # is equal to `seq_length = seq.index(150004)`
+        position_ids = torch.arange(context_length, dtype=torch.long, device=device)
+        if not gmask:
+            position_ids[seq_length:] = mask_position
+        block_position_ids = torch.cat(
+            (
+                torch.zeros(seq_length, dtype=torch.long, device=device),
+                torch.arange(
+                    context_length - seq_length, dtype=torch.long, device=device
+                )
+                + 1,
+            )
+        )
+        position_ids = torch.stack((position_ids, block_position_ids), dim=0)
+    else:
+        position_ids = torch.arange(context_length, dtype=torch.long, device=device)
+        if not gmask:
+            position_ids[context_length - 1 :] = mask_position
+    return attention_mask, position_ids
+
+
+def data_collator(features: list) -> dict:
+    len_ids = [len(feature["input_ids"]) for feature in features]
+    longest = max(len_ids)
+    input_ids = []
+    attention_mask_list = []
+    position_ids_list = []
+    labels_list = []
+    for ids_l, feature in sorted(zip(len_ids, features), key=lambda x: -x[0]):
+        ids = feature["input_ids"]
+        seq_len = feature["seq_len"]
+        labels = (
+            [-100] * (seq_len - 1)
+            + ids[(seq_len - 1) :]
+            + [-100] * (longest - ids_l)
+        )
+        ids = ids + [tokenizer.pad_token_id] * (longest - ids_l)
+        _ids = torch.LongTensor(ids)
+        attention_mask, position_ids = get_masks_and_position_ids(
+            ids, seq_len, longest, _ids.device, gmask=False
+        )
+        labels_list.append(torch.LongTensor(labels))
+        input_ids.append(_ids)
+        attention_mask_list.append(attention_mask)
+        position_ids_list.append(position_ids)
+    input_ids = torch.stack(input_ids)
+    labels = torch.stack(labels_list)
+    attention_mask = torch.stack(attention_mask_list)
+    position_ids = torch.stack(position_ids_list)
+    return {
+        "input_ids": input_ids,
+        "labels": labels,
+        "attention_mask": attention_mask,
+        "position_ids": position_ids,
+    }
+
+
+class ModifiedTrainer(Trainer):
+    def compute_loss(self, model, inputs, return_outputs=False):
+        return model(
+            input_ids=inputs["input_ids"],
+            attention_mask=inputs["attention_mask"],
+            position_ids=inputs["position_ids"],
+            labels=inputs["labels"],
+        ).loss
+
+    def save_model(self, output_dir=None, _internal_call=False):
+        from transformers.trainer import TRAINING_ARGS_NAME
+        os.makedirs(output_dir, exist_ok=True)
+        torch.save(self.args, os.path.join(output_dir, TRAINING_ARGS_NAME))
+        saved_params = {
+            k: v.to("cpu") for k, v in self.model.named_parameters() if v.requires_grad
+        }
+        torch.save(saved_params, os.path.join(output_dir, "adapter_model.bin"))
+
+
+def main():
+    finetune_args, training_args = HfArgumentParser(
+        (FinetuneArguments, TrainingArguments)
+    ).parse_args_into_dataclasses()
+
+    # init model
+    model = ChatGLMForConditionalGeneration.from_pretrained(
+        "THUDM/chatglm-6b", load_in_8bit=True, trust_remote_code=True, device_map="auto"
+    )
+    model.gradient_checkpointing_enable()
+    model.enable_input_require_grads()
+    model.is_parallelizable = True
+    model.model_parallel = True
+    model.lm_head = CastOutputToFloat(model.lm_head)
+    model.config.use_cache = (
+        False  # silence the warnings. Please re-enable for inference!
+    )
+
+    # setup peft
+    peft_config = LoraConfig(
+        task_type=TaskType.CAUSAL_LM,
+        inference_mode=False,
+        r=finetune_args.lora_rank,
+        lora_alpha=32,
+        lora_dropout=0.1,
+    )
+    model = get_peft_model(model, peft_config)
+
+    # load dataset
+    dataset = datasets.load_from_disk(finetune_args.dataset_path)
+
+    # start train
+    trainer = ModifiedTrainer(
+        model=model,
+        train_dataset=dataset,
+        args=training_args,
+        data_collator=data_collator,
+    )
+    trainer.train()
+
+    # save model
+    model.save_pretrained(training_args.output_dir)
+
+
+if __name__ == "__main__":
+    main()
