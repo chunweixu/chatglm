@@ -50,4 +50,4 @@ class CLMDataCollator:
                                    padding='max_length', max_length=self.max_length, truncation=True).input_ids
         labels = self.tokenizer(labels, return_tensors="pt",
                                    padding='max_length', max_length=self.max_length, truncation=True).input_ids
-        return {"input_ids": input_ids, "labels": labels}D
+        return {"input_ids": input_ids, "labels": labels}
