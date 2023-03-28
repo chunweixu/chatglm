@@ -13,6 +13,9 @@ peft_config = LoraConfig(
 tokenizer = AutoTokenizer.from_pretrained("THUDM/chatglm-6b", trust_remote_code=True)
 model = AutoModel.from_pretrained("THUDM/chatglm-6b", trust_remote_code=True)
 
+model.save_pretrained("./data/model/chatglm")
+tokenizer.save_pretrained("./data/model/chatglm")
+
 # from peft import prepare_model_for_int8_training
 # model = prepare_model_for_int8_training(model)
 
