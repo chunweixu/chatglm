@@ -141,7 +141,7 @@ def main():
         "../autodl-tmp/pertrained_model/chatglm-6B", load_in_8bit=True, trust_remote_code=True, device_map="auto"
     )
     model.gradient_checkpointing_enable()
-    model.enable_input_require_grads()
+    # model.enable_input_require_grads()
     model.is_parallelizable = True
     model.model_parallel = True
     model.lm_head = CastOutputToFloat(model.lm_head)
