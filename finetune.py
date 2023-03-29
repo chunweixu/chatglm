@@ -10,13 +10,14 @@ import datasets
 import os
 
 
-tokenizer = AutoTokenizer.from_pretrained("THUDM/chatglm-6b", trust_remote_code=True)
+tokenizer = AutoTokenizer.from_pretrained("../autodl-tmp/pertrained_model/chatglm-6B", trust_remote_code=True)
 
 
 @dataclass
 class FinetuneArguments:
-    dataset_path: str = field(default="data/alpaca")
-    model_path: str = field(default="output")
+    dataset_path: str = field(default="data/dataset/alpaca")
+    model_path: str = field(default="data/model/template")
+    log_path: str = field(default="data/log")
     lora_rank: int = field(default=8)
 
 
@@ -114,13 +115,29 @@ class ModifiedTrainer(Trainer):
 
 
 def main():
-    finetune_args, training_args = HfArgumentParser(
-        (FinetuneArguments, TrainingArguments)
-    ).parse_args_into_dataclasses()
+ 
+    finetune_args = HfArgumentParser((FinetuneArguments)).parse_args_into_dataclasses()
+    
+    training_args = TrainingArguments(
+        output_dir=finetune_args.model_path,
+        overwrite_output_dir=True,
+        num_train_epochs=1,
+        per_device_train_batch_size=4,
+        save_steps=1000,
+        save_total_limit=1,
+        logging_steps=100,
+        logging_dir=finetune_args.log_path,
+        learning_rate=1e-4,
+        gradient_accumulation_steps=16,
+        fp16=True,
+        dataloader_num_workers=4,
+        run_name="chatglm",
+    )
+
 
     # init model
     model = ChatGLMForConditionalGeneration.from_pretrained(
-        "THUDM/chatglm-6b", load_in_8bit=True, trust_remote_code=True, device_map="auto"
+        "../autodl-tmp/pertrained_model/chatglm-6B", load_in_8bit=True, trust_remote_code=True, device_map="auto"
     )
     model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
@@ -154,7 +171,7 @@ def main():
     trainer.train()
 
     # save model
-    model.save_pretrained(training_args.output_dir)
+    model.save_pretrained("data/model/finetune-chatglm")
 
 
 if __name__ == "__main__":
