@@ -69,7 +69,8 @@ def data_collator(features: list) -> dict:
     for ids_l, feature in sorted(zip(len_ids, features), key=lambda x: -x[0]):
         print(feature)
         ids = feature["input_ids"]
-        seq_len = feature["seq_len"]
+        # seq_len = feature["seq_len"]
+        seq_len = len(ids)
         labels = (
             [-100] * (seq_len - 1)
             + ids[(seq_len - 1) :]
@@ -162,6 +163,7 @@ def main():
 
     # load dataset
     dataset = datasets.load_from_disk(finetune_args.dataset_path)
+    print(dataset)
 
     # start train
     trainer = ModifiedTrainer(
