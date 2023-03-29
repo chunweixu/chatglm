@@ -138,7 +138,7 @@ def main():
 
     # init model
     model = ChatGLMForConditionalGeneration.from_pretrained(
-        "../autodl-tmp/pertrained_model/chatglm-6B", load_in_8bit=True, trust_remote_code=True, device_map="auto"
+        "../autodl-tmp/pertrained_model/chatglm-6B", device_map="auto"
     )
     model.gradient_checkpointing_enable()
     # model.enable_input_require_grads()
