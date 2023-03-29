@@ -116,8 +116,8 @@ class ModifiedTrainer(Trainer):
 
 def main():
  
-    finetune_args = HfArgumentParser((FinetuneArguments)).parse_args_into_dataclasses()
-    print(finetune_args)
+    # finetune_args = HfArgumentParser((FinetuneArguments)).parse_args_into_dataclasses()
+    finetune_args = FinetuneArguments()
     
     training_args = TrainingArguments(
         output_dir=finetune_args.model_path,
