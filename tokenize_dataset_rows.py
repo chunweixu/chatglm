@@ -20,7 +20,7 @@ def preprocess(tokenizer, config, example, max_seq_length):
 
 
 def read_jsonl(path, max_seq_length, skip_overlength=False):
-    model_name = "THUDM/chatglm-6b"
+    model_name = "../autodl-tmp/pertrained_model/chatglm-6B"
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_name, trust_remote_code=True)
     config = transformers.AutoConfig.from_pretrained(

@@ -27,10 +27,9 @@ collate_fn = CLMDataCollator(tokenizer, max_length=2048)
 os.environ["WANDB_DISABLED"] = "true"
 training_args = TrainingArguments(
     output_dir='./data/results',
-    num_train_epochs=2,
+    num_train_epochs=1,
     gradient_accumulation_steps=1,
     per_device_train_batch_size=1,
-    per_device_eval_batch_size=4,
     logging_dir='./data/log/',
     learning_rate=1e-3,
     save_steps=1000,
