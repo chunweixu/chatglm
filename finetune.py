@@ -67,6 +67,7 @@ def data_collator(features: list) -> dict:
     position_ids_list = []
     labels_list = []
     for ids_l, feature in sorted(zip(len_ids, features), key=lambda x: -x[0]):
+        print(feature)
         ids = feature["input_ids"]
         seq_len = feature["seq_len"]
         labels = (
